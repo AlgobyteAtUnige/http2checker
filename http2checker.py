@@ -21,6 +21,7 @@ import http.client
 import re
 import html
 import urllib.parse
+import traceback
 import csv
 from typing import List, Dict, Any
 
@@ -102,6 +103,8 @@ def recupera_titolo_con_redirect(start_url: str, ignorare_ssl: bool, max_redirec
             break
             
         except Exception:
+            if verbose:
+                traceback.print_exc()
             try: 
                 conn.close() 
             except Exception: 
@@ -110,7 +113,7 @@ def recupera_titolo_con_redirect(start_url: str, ignorare_ssl: bool, max_redirec
             
     return "N/A"
 
-def analizza_dominio(dominio: str, ignorare_ssl: bool = False) -> Dict[str, Any]:
+def analizza_dominio(dominio: str, ignorare_ssl: bool = False, verbose: bool = False) -> Dict[str, Any]:
     risultato = {
         "dominio": dominio,
         "dns_risolve": False,
@@ -154,6 +157,8 @@ def analizza_dominio(dominio: str, ignorare_ssl: bool = False) -> Dict[str, Any]
         if server_header:
             risultato["server_version"] = server_header
     except Exception:
+        if verbose:
+            traceback.print_exc()
         risultato["http_supportato"] = False
     finally:
         try: 
@@ -170,7 +175,8 @@ def analizza_dominio(dominio: str, ignorare_ssl: bool = False) -> Dict[str, Any]
         if conn_h2.sock:
             risultato["http2_supportato"] = (conn_h2.sock.selected_alpn_protocol() == 'h2')
     except Exception:
-        pass
+        if verbose:
+            traceback.print_exc()
     finally:
         try: 
             conn_h2.close() 
@@ -228,6 +234,8 @@ def analizza_dominio(dominio: str, ignorare_ssl: bool = False) -> Dict[str, Any]
         risultato["https_supportato"] = False
         risultato["ssl_status"] = "NO_HTTPS"
     except Exception as e:
+        if verbose:
+            traceback.print_exc()
         risultato["https_supportato"] = False
         risultato["ssl_status"] = f"E:{type(e).__name__}"[:11]
     finally:
@@ -261,6 +269,7 @@ def main():
     parser.add_argument("dominio", nargs="?", help="A single URL to check")
     parser.add_argument("-f", "--file", help="List of URLs to check, one per line")
     parser.add_argument("-k", "--insecure", action="store_true", help="Ignore SSL error")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show exception details for debugging")
     parser.add_argument("-o", "--output", help="Export on CSV")
     
     args = parser.parse_args()
@@ -293,7 +302,7 @@ def main():
     print("-" * 133)
 
     for dom in lista_domini:
-        res = analizza_dominio(dom, ignorare_ssl=args.insecure)
+        res = analizza_dominio(dom, ignorare_ssl=args.insecure, verbose=args.verbose)
         
         # Preparazione variabili per logica N/A in caso di DNS fallito
         dns_status = "OK" if res["dns_risolve"] else "FAIL"
