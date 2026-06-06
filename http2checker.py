@@ -161,28 +161,41 @@ def analizza_dominio(dominio: str, ignorare_ssl: bool = False) -> Dict[str, Any]
         except Exception: 
             pass
 
-    # 2. Verifica HTTPS
+    # 2a. Rilevamento HTTP/2 (connessione separata per evitare BadStatusLine)
+    try:
+        ctx_h2 = ssl._create_unverified_context() if ignorare_ssl else ssl.create_default_context()
+        ctx_h2.set_alpn_protocols(['h2', 'http/1.1'])
+        conn_h2 = http.client.HTTPSConnection(dominio, timeout=5, context=ctx_h2)
+        conn_h2.connect()
+        if conn_h2.sock:
+            risultato["http2_supportato"] = (conn_h2.sock.selected_alpn_protocol() == 'h2')
+    except Exception:
+        pass
+    finally:
+        try: 
+            conn_h2.close() 
+        except Exception: 
+            pass
+
+    # 2b. Verifica HTTPS (solo HTTP/1.1)
     try:
         contesto_ssl = ssl._create_unverified_context() if ignorare_ssl else ssl.create_default_context()
-        contesto_ssl.set_alpn_protocols(['h2', 'http/1.1'])
+        contesto_ssl.set_alpn_protocols(['http/1.1'])
         
         conn = http.client.HTTPSConnection(dominio, timeout=5, context=contesto_ssl)
         conn.connect()
         risultato["https_supportato"] = True
         
-        if conn.sock:
-            risultato["http2_supportato"] = (conn.sock.selected_alpn_protocol() == 'h2')
-            
-            if not ignorare_ssl:
-                risultato["ssl_status"] = "VALIDO"
-                cert = conn.sock.getpeercert()
-                if cert:
-                    risultato["ssl_issuer"] = parse_issuer(cert)
-                    risultato["ssl_scadenza"] = parse_expiry(cert)
-            else:
-                risultato["ssl_status"] = "BYPASS (-k)"
-                risultato["ssl_issuer"] = "(Nascosto)"
-                risultato["ssl_scadenza"] = "(Nascosto)"
+        if not ignorare_ssl:
+            risultato["ssl_status"] = "VALIDO"
+            cert = conn.sock.getpeercert()
+            if cert:
+                risultato["ssl_issuer"] = parse_issuer(cert)
+                risultato["ssl_scadenza"] = parse_expiry(cert)
+        else:
+            risultato["ssl_status"] = "BYPASS (-k)"
+            risultato["ssl_issuer"] = "(Nascosto)"
+            risultato["ssl_scadenza"] = "(Nascosto)"
         
         conn.request("HEAD", "/", headers=headers)
         res = conn.getresponse()
