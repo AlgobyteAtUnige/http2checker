@@ -8,6 +8,7 @@
 #
 # This script check an URL for DNS, HTTP/HTTPS presence, HTTP/2.0 support, SSL and HTTP server...
 #
+# v0.2 - 06.06.2026 - A new PR merged with HTTP2 fixes, translated all to english
 # v0.1 - 06.06.2026 - First release
 #
 #################################################
