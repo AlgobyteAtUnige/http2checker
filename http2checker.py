@@ -48,17 +48,17 @@ def parse_expiry(cert: Any) -> str:
         return f"{year}-{month}-{day}"
     return cert['notAfter']
 
-def estrai_titolo(html_content: str) -> str:
+def extract_title(html_content: str) -> str:
     match = re.search(r'<title[^>]*>(.*?)</title>', html_content, re.IGNORECASE | re.DOTALL)
     if match:
-        titolo = match.group(1).strip()
-        titolo = re.sub(r'\s+', ' ', titolo)
-        return html.unescape(titolo)
+        title = match.group(1).strip()
+        title = re.sub(r'\s+', ' ', title)
+        return html.unescape(title)
     return "N/A"
 
-def recupera_titolo_con_redirect(start_url: str, ignorare_ssl: bool, max_redirects: int = 4) -> str:
+def get_title_with_redirect(start_url: str, ignore_ssl: bool, max_redirects: int = 4) -> str:
     url = start_url
-    contesto_ssl = ssl._create_unverified_context() if ignorare_ssl else ssl.create_default_context()
+    ssl_context = ssl._create_unverified_context() if ignore_ssl else ssl.create_default_context()
     
     for _ in range(max_redirects):
         parsed = urllib.parse.urlparse(url)
@@ -72,7 +72,7 @@ def recupera_titolo_con_redirect(start_url: str, ignorare_ssl: bool, max_redirec
         
         try:
             if scheme == 'https':
-                conn = http.client.HTTPSConnection(host, port, timeout=5, context=contesto_ssl)
+                conn = http.client.HTTPSConnection(host, port, timeout=5, context=ssl_context)
             else:
                 conn = http.client.HTTPConnection(host, port, timeout=5)
                 
@@ -94,10 +94,10 @@ def recupera_titolo_con_redirect(start_url: str, ignorare_ssl: bool, max_redirec
                     break
                     
             if res.status == 200:
-                corpo_html = res.read(16384).decode('utf-8', errors='ignore')
-                titolo = estrai_titolo(corpo_html)
+                html_body = res.read(16384).decode('utf-8', errors='ignore')
+                title = extract_title(html_body)
                 conn.close()
-                return titolo
+                return title
                 
             conn.close()
             break
@@ -113,32 +113,32 @@ def recupera_titolo_con_redirect(start_url: str, ignorare_ssl: bool, max_redirec
             
     return "N/A"
 
-def analizza_dominio(dominio: str, ignorare_ssl: bool = False, verbose: bool = False) -> Dict[str, Any]:
-    risultato = {
-        "dominio": dominio,
-        "dns_risolve": False,
+def analyze_domain(domain: str, ignore_ssl: bool = False, verbose: bool = False) -> Dict[str, Any]:
+    result = {
+        "domain": domain,
+        "dns_resolves": False,
         "ip": None,
-        "ip_pubblico": False,
-        "http_supportato": False,
-        "https_supportato": False,
-        "http2_supportato": False,
+        "is_public_ip": False,
+        "http_supported": False,
+        "https_supported": False,
+        "http2_supported": False,
         "server_version": "N/A",
         "ssl_status": "N/A",
         "ssl_issuer": "N/A",
-        "ssl_scadenza": "N/A",
-        "titolo": "N/A"
+        "ssl_expiry": "N/A",
+        "title": "N/A"
     }
 
     try:
-        ip = socket.gethostbyname(dominio)
-        risultato["dns_risolve"] = True
-        risultato["ip"] = ip
+        ip = socket.gethostbyname(domain)
+        result["dns_resolves"] = True
+        result["ip"] = ip
     except socket.gaierror:
-        return risultato
+        return result
 
     try:
         ip_obj = ipaddress.ip_address(ip)
-        risultato["ip_pubblico"] = ip_obj.is_global
+        result["is_public_ip"] = ip_obj.is_global
     except ValueError:
         pass
 
@@ -147,33 +147,33 @@ def analizza_dominio(dominio: str, ignorare_ssl: bool = False, verbose: bool = F
         "Connection": "close"
     }
 
-    # 1. Verifica HTTP
+    # 1. HTTP Check
     try:
-        conn = http.client.HTTPConnection(dominio, timeout=5)
+        conn = http.client.HTTPConnection(domain, timeout=5)
         conn.request("HEAD", "/", headers=headers)
         res = conn.getresponse()
-        risultato["http_supportato"] = True
+        result["http_supported"] = True
         server_header = res.getheader('Server')
         if server_header:
-            risultato["server_version"] = server_header
+            result["server_version"] = server_header
     except Exception:
         if verbose:
             traceback.print_exc()
-        risultato["http_supportato"] = False
+        result["http_supported"] = False
     finally:
         try: 
             conn.close() 
         except Exception: 
             pass
 
-    # 2a. Rilevamento HTTP/2 (connessione separata per evitare BadStatusLine)
+    # 2a. HTTP/2 Detection (separate connection to avoid BadStatusLine)
     try:
-        ctx_h2 = ssl._create_unverified_context() if ignorare_ssl else ssl.create_default_context()
+        ctx_h2 = ssl._create_unverified_context() if ignore_ssl else ssl.create_default_context()
         ctx_h2.set_alpn_protocols(['h2', 'http/1.1'])
-        conn_h2 = http.client.HTTPSConnection(dominio, timeout=5, context=ctx_h2)
+        conn_h2 = http.client.HTTPSConnection(domain, timeout=5, context=ctx_h2)
         conn_h2.connect()
         if conn_h2.sock:
-            risultato["http2_supportato"] = (conn_h2.sock.selected_alpn_protocol() == 'h2')
+            result["http2_supported"] = (conn_h2.sock.selected_alpn_protocol() == 'h2')
     except Exception:
         if verbose:
             traceback.print_exc()
@@ -183,141 +183,141 @@ def analizza_dominio(dominio: str, ignorare_ssl: bool = False, verbose: bool = F
         except Exception: 
             pass
 
-    # 2b. Verifica HTTPS (solo HTTP/1.1)
+    # 2b. HTTPS Check (HTTP/1.1 only)
     try:
-        contesto_ssl = ssl._create_unverified_context() if ignorare_ssl else ssl.create_default_context()
-        contesto_ssl.set_alpn_protocols(['http/1.1'])
+        ssl_context = ssl._create_unverified_context() if ignore_ssl else ssl.create_default_context()
+        ssl_context.set_alpn_protocols(['http/1.1'])
         
-        conn = http.client.HTTPSConnection(dominio, timeout=5, context=contesto_ssl)
+        conn = http.client.HTTPSConnection(domain, timeout=5, context=ssl_context)
         conn.connect()
-        risultato["https_supportato"] = True
+        result["https_supported"] = True
         
-        if not ignorare_ssl:
-            risultato["ssl_status"] = "VALIDO"
+        if not ignore_ssl:
+            result["ssl_status"] = "VALID"
             cert = conn.sock.getpeercert()
             if cert:
-                risultato["ssl_issuer"] = parse_issuer(cert)
-                risultato["ssl_scadenza"] = parse_expiry(cert)
+                result["ssl_issuer"] = parse_issuer(cert)
+                result["ssl_expiry"] = parse_expiry(cert)
         else:
-            risultato["ssl_status"] = "BYPASS (-k)"
-            risultato["ssl_issuer"] = "(Nascosto)"
-            risultato["ssl_scadenza"] = "(Nascosto)"
+            result["ssl_status"] = "BYPASS (-k)"
+            result["ssl_issuer"] = "(Hidden)"
+            result["ssl_expiry"] = "(Hidden)"
         
         conn.request("HEAD", "/", headers=headers)
         res = conn.getresponse()
         server_header = res.getheader('Server')
-        if server_header and risultato["server_version"] == "N/A":
-            risultato["server_version"] = server_header
+        if server_header and result["server_version"] == "N/A":
+            result["server_version"] = server_header
             
     except ssl.SSLError as e:
-        risultato["https_supportato"] = True 
+        result["https_supported"] = True 
         err_str = str(e)
         if "CERTIFICATE_VERIFY_FAILED" in err_str:
             if "expired" in err_str.lower():
-                risultato["ssl_status"] = "SCADUTO"
+                result["ssl_status"] = "EXPIRED"
             elif "self signed" in err_str.lower():
-                risultato["ssl_status"] = "SELF-SIGNED"
+                result["ssl_status"] = "SELF-SIGNED"
             else:
-                risultato["ssl_status"] = "ERR_CERT"
+                result["ssl_status"] = "ERR_CERT"
         elif "hostname doesn't match" in err_str.lower():
-            risultato["ssl_status"] = "ERR_HOSTNAME"
+            result["ssl_status"] = "ERR_HOSTNAME"
         elif "wrong version number" in err_str.lower():
-            risultato["ssl_status"] = "ERR_TLS_VERS"
+            result["ssl_status"] = "ERR_TLS_VERS"
         else:
-            risultato["ssl_status"] = "ERR_SSL"
+            result["ssl_status"] = "ERR_SSL"
     except TimeoutError:
-        risultato["ssl_status"] = "TIMEOUT"
+        result["ssl_status"] = "TIMEOUT"
     except ConnectionRefusedError:
-        risultato["https_supportato"] = False
-        risultato["ssl_status"] = "RIFIUTATA"
+        result["https_supported"] = False
+        result["ssl_status"] = "REFUSED"
     except OSError:
-        risultato["https_supportato"] = False
-        risultato["ssl_status"] = "NO_HTTPS"
+        result["https_supported"] = False
+        result["ssl_status"] = "NO_HTTPS"
     except Exception as e:
         if verbose:
             traceback.print_exc()
-        risultato["https_supportato"] = False
-        risultato["ssl_status"] = f"E:{type(e).__name__}"[:11]
+        result["https_supported"] = False
+        result["ssl_status"] = f"E:{type(e).__name__}"[:11]
     finally:
         try: 
             conn.close() 
         except Exception: 
             pass
 
-    # 3. Estrazione Titolo con Follow Redirect
-    if risultato["http_supportato"] or risultato["https_supportato"]:
-        start_scheme = "https" if risultato["https_supportato"] else "http"
-        start_url = f"{start_scheme}://{dominio}/"
-        risultato["titolo"] = recupera_titolo_con_redirect(start_url, ignorare_ssl)
+    # 3. Extract Title with Follow Redirect
+    if result["http_supported"] or result["https_supported"]:
+        start_scheme = "https" if result["https_supported"] else "http"
+        start_url = f"{start_scheme}://{domain}/"
+        result["title"] = get_title_with_redirect(start_url, ignore_ssl)
 
-    return risultato
+    return result
 
-def carica_domini_da_file(nome_file: str) -> List[str]:
-    if not os.path.exists(nome_file):
-        print(f"Errore: Il file '{nome_file}' non esiste.")
+def load_domains_from_file(filename: str) -> List[str]:
+    if not os.path.exists(filename):
+        print(f"Error: The file '{filename}' does not exist.")
         return []
-    domini = []
-    with open(nome_file, "r", encoding="utf-8") as file:
-        for riga in file:
-            dominio_pulito = riga.strip()
-            if dominio_pulito and not dominio_pulito.startswith("#"):
-                domini.append(dominio_pulito)
-    return domini
+    domains = []
+    with open(filename, "r", encoding="utf-8") as file:
+        for line in file:
+            clean_domain = line.strip()
+            if clean_domain and not clean_domain.startswith("#"):
+                domains.append(clean_domain)
+    return domains
 
 def main():
     parser = argparse.ArgumentParser(description="HTTP2Checker: DNS, IP, SSL, Server, Title and CSV export")
-    parser.add_argument("dominio", nargs="?", help="A single URL to check")
+    parser.add_argument("domain", nargs="?", help="A single URL to check")
     parser.add_argument("-f", "--file", help="List of URLs to check, one per line")
     parser.add_argument("-k", "--insecure", action="store_true", help="Ignore SSL error")
     parser.add_argument("-v", "--verbose", action="store_true", help="Show exception details for debugging")
     parser.add_argument("-o", "--output", help="Export on CSV")
     
     args = parser.parse_args()
-    if not args.dominio and not args.file:
+    if not args.domain and not args.file:
         parser.print_help()
         return
 
-    lista_domini = [args.dominio] if args.dominio else carica_domini_da_file(args.file)
-    if not lista_domini: return
+    domain_list = [args.domain] if args.domain else load_domains_from_file(args.file)
+    if not domain_list: return
 
-    # Configurazione scrittura CSV
+    # CSV Writing configuration
     csv_file = None
     csv_writer = None
     if args.output:
         try:
             csv_file = open(args.output, mode='w', newline='', encoding='utf-8')
             csv_writer = csv.writer(csv_file, delimiter=',', quoting=csv.QUOTE_MINIMAL)
-            # Scrittura Intestazione CSV
+            # CSV Header writing
             csv_writer.writerow([
-                "Dominio", "DNS", "IP", "Pubblico", "HTTP", "HTTPS", 
-                "HTTP/2", "Server", "SSL Status", "Emittente", "Scadenza", "Titolo"
+                "Domain", "DNS", "IP", "Public", "HTTP", "HTTPS", 
+                "HTTP/2", "Server", "SSL Status", "Issuer", "Expiry", "Title"
             ])
-            print(f"I risultati verranno esportati in: {args.output}")
+            print(f"Results will be exported to: {args.output}")
         except Exception as e:
-            print(f"Errore nell'apertura del file CSV: {e}")
+            print(f"Error opening CSV file: {e}")
             return
 
-    print("\nAvvio analisi...\n")
-    print(f"{'DOMINIO':<22} | {'IP':<15} | {'HTTP':<4} | {'HTTPS':<5} | {'H2':<3} | {'SERVER':<10} | {'SSL STATUS':<11} | {'EMITTENTE':<12} | {'SCADENZA':<10} | {'TITOLO':<22}")
+    print("\nStarting analysis...\n")
+    print(f"{'DOMAIN':<22} | {'IP':<15} | {'HTTP':<4} | {'HTTPS':<5} | {'H2':<3} | {'SERVER':<10} | {'SSL STATUS':<11} | {'ISSUER':<12} | {'EXPIRY':<10} | {'TITLE':<22}")
     print("-" * 133)
 
-    for dom in lista_domini:
-        res = analizza_dominio(dom, ignorare_ssl=args.insecure, verbose=args.verbose)
+    for dom in domain_list:
+        res = analyze_domain(dom, ignore_ssl=args.insecure, verbose=args.verbose)
         
-        # Preparazione variabili per logica N/A in caso di DNS fallito
-        dns_status = "OK" if res["dns_risolve"] else "FAIL"
+        # Preparing variables for N/A logic if DNS fails
+        dns_status = "OK" if res["dns_resolves"] else "FAIL"
         ip_str = res["ip"] if res["ip"] else "N/A"
-        pub_status = "SI" if res["ip_pubblico"] else "NO"
-        http_status = "SI" if res["http_supportato"] else "NO"
-        https_status = "SI" if res["https_supportato"] else "NO"
-        h2_status = "SI" if res["http2_supportato"] else "NO"
+        pub_status = "YES" if res["is_public_ip"] else "NO"
+        http_status = "YES" if res["http_supported"] else "NO"
+        https_status = "YES" if res["https_supported"] else "NO"
+        h2_status = "YES" if res["http2_supported"] else "NO"
         server_str = res["server_version"]
         ssl_str = res["ssl_status"]
         issuer_str = res["ssl_issuer"]
-        expiry_str = res["ssl_scadenza"]
-        titolo_str = res["titolo"]
+        expiry_str = res["ssl_expiry"]
+        title_str = res["title"]
 
-        if not res["dns_risolve"]:
+        if not res["dns_resolves"]:
             pub_status = "N/A"
             http_status = "N/A"
             https_status = "N/A"
@@ -326,30 +326,30 @@ def main():
             ssl_str = "N/A"
             issuer_str = "N/A"
             expiry_str = "N/A"
-            titolo_str = "N/A"
+            title_str = "N/A"
 
-        # Scrittura nel CSV (dati intatti, senza troncamenti)
+        # Writing to CSV (data intact, without truncations)
         if csv_writer:
             csv_writer.writerow([
-                res["dominio"], dns_status, ip_str, pub_status,
+                res["domain"], dns_status, ip_str, pub_status,
                 http_status, https_status, h2_status, server_str,
-                ssl_str, issuer_str, expiry_str, titolo_str
+                ssl_str, issuer_str, expiry_str, title_str
             ])
-            # Forziamo la scrittura su disco ad ogni riga
+            # Force disk write on every line
             csv_file.flush()
 
-        # Troncamento delle variabili SOLO per l'output a schermo
+        # Truncating variables ONLY for screen output
         dom_print = dom if len(dom) <= 22 else dom[:19] + "..."
         server_print = server_str if len(server_str) <= 10 else server_str[:7] + "..."
         ssl_print = ssl_str if len(ssl_str) <= 11 else ssl_str[:11]
         issuer_print = issuer_str if len(issuer_str) <= 12 else issuer_str[:9] + "..."
-        titolo_print = titolo_str if len(titolo_str) <= 22 else titolo_str[:19] + "..."
+        title_print = title_str if len(title_str) <= 22 else title_str[:19] + "..."
 
-        print(f"{dom_print:<22} | {ip_str:<15} | {http_status:<4} | {https_status:<5} | {h2_status:<3} | {server_print:<10} | {ssl_print:<11} | {issuer_print:<12} | {expiry_str:<10} | {titolo_print:<22}")
+        print(f"{dom_print:<22} | {ip_str:<15} | {http_status:<4} | {https_status:<5} | {h2_status:<3} | {server_print:<10} | {ssl_print:<11} | {issuer_print:<12} | {expiry_str:<10} | {title_print:<22}")
 
     if csv_file:
         csv_file.close()
-        print(f"\nEsportazione completata. Dati salvati in: {args.output}")
+        print(f"\nExport completed. Data saved in: {args.output}")
 
 if __name__ == "__main__":
     main()
