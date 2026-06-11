@@ -8,6 +8,7 @@
 #
 # This script check an URL for DNS, HTTP/HTTPS presence, HTTP/2.0 support, SSL and HTTP server...
 #
+# v0.3 - 11.06.2026 - Fixed a bug in exception raised on invalid SSL cert. Added a comfortable summary at the end of the analysis.
 # v0.2 - 06.06.2026 - A new PR merged with HTTP2 fixes, translated all to english
 # v0.1 - 06.06.2026 - First release
 #
@@ -57,7 +58,7 @@ def extract_title(html_content: str) -> str:
         return html.unescape(title)
     return "N/A"
 
-def get_title_with_redirect(start_url: str, ignore_ssl: bool, max_redirects: int = 4) -> str:
+def get_title_with_redirect(start_url: str, ignore_ssl: bool, max_redirects: int = 4, verbose: bool = False) -> str:
     url = start_url
     ssl_context = ssl._create_unverified_context() if ignore_ssl else ssl.create_default_context()
     
@@ -249,7 +250,7 @@ def analyze_domain(domain: str, ignore_ssl: bool = False, verbose: bool = False)
     if result["http_supported"] or result["https_supported"]:
         start_scheme = "https" if result["https_supported"] else "http"
         start_url = f"{start_scheme}://{domain}/"
-        result["title"] = get_title_with_redirect(start_url, ignore_ssl)
+        result["title"] = get_title_with_redirect(start_url, ignore_ssl, verbose)
 
     return result
 
@@ -298,13 +299,28 @@ def main():
             print(f"Error opening CSV file: {e}")
             return
 
+    # Initialize counters for the summary
+    count_total = 0
+    count_http = 0
+    count_https = 0
+    count_http2 = 0
+    count_cert_valid = 0
+    count_cert_expired = 0
+
     print("\nStarting analysis...\n")
     print(f"{'DOMAIN':<22} | {'IP':<15} | {'HTTP':<4} | {'HTTPS':<5} | {'H2':<3} | {'SERVER':<10} | {'SSL STATUS':<11} | {'ISSUER':<12} | {'EXPIRY':<10} | {'TITLE':<22}")
     print("-" * 133)
 
     for dom in domain_list:
         res = analyze_domain(dom, ignore_ssl=args.insecure, verbose=args.verbose)
-        
+
+        count_total += 1
+        if res["http_supported"]: count_http += 1
+        if res["https_supported"]: count_https += 1
+        if res["http2_supported"]: count_http2 += 1
+        if res["ssl_status"] == "VALID": count_cert_valid += 1
+        if res["ssl_status"] == "EXPIRED": count_cert_expired += 1
+
         # Preparing variables for N/A logic if DNS fails
         dns_status = "OK" if res["dns_resolves"] else "FAIL"
         ip_str = res["ip"] if res["ip"] else "N/A"
@@ -351,6 +367,18 @@ def main():
     if csv_file:
         csv_file.close()
         print(f"\nExport completed. Data saved in: {args.output}")
+
+    # Print Concluding Summary
+    print("\n" + "=" * 50)
+    print(f"{'ANALYSIS SUMMARY':^50}")
+    print("=" * 50)
+    print(f" Total Domains Analyzed : {count_total}")
+    print(f" Domains with HTTP      : {count_http}")
+    print(f" Domains with HTTPS     : {count_https}")
+    print(f" Domains with HTTP/2    : {count_http2}")
+    print(f" Valid Certificates     : {count_cert_valid}")
+    print(f" Expired Certificates   : {count_cert_expired}")
+    print("=" * 50 + "\n")
 
 if __name__ == "__main__":
     main()
